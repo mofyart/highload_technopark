@@ -248,6 +248,6 @@ Anycast применяется **выборочно**, только там, гд
 ### 3.7 Источники
 
 - [bgp.tools/as/47764](https://bgp.tools/as/47764), [bgp.he.net/AS47764](https://bgp.he.net/AS47764) — сетевая инфраструктура VK (AS47764, upstream-провайдеры).
-- [vk.company/ru/press/releases/11468](https://vk.company/ru/press/releases/11468/), [vkcloud.kz/blog](https://vkcloud.kz/blog/vk-tech-zapustila-vtoruyu-zonu-dostupnosti-vk-cloud-v-respublike-kazakhstan/) — регион VK Cloud в Казахстане.
-- [anti-malware.ru/news/2026-05-12-111332](https://www.anti-malware.ru/news/2026-05-12-111332/50002) — зоны доступности VK Cloud в Москве.
+- [vk.company/ru/press/releases/11468](https://vk.company/ru/press/releases/11468/), [vkcloud.kz/blog](https://vkcloud.kz/blog/vk-tech-zapustila-vtoruyu-zonu-dostupnosti-vk-cloud-v-respublike-kazakhstan/) — регион VK в Казахстане.
+- [anti-malware.ru/news/2026-05-12-111332](https://www.anti-malware.ru/news/2026-05-12-111332/50002) — зоны доступности VK в Москве.
 - [mforum.ru/analit/tsod.htm](http://www.mforum.ru/analit/tsod.htm) — переход VK на собственные ЦОД (2023).
