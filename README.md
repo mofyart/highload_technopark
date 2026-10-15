@@ -306,15 +306,15 @@
 
 ### 3.4 Схема DNS-балансировки
 
-| Имя / вариант DNS | Механизм | Логика выбора                                                                                                                                               | Health-check                               |
-|---|---|-------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------|
-| `ns1–ns4.cloud.example` | BGP Anycast | 4 адреса: ns1–ns2 в префиксе RU, ns3–ns4 в префиксе KZ (больше двух NS и хотя бы один удалённый — [RFC 2182 §5](https://www.rfc-editor.org/rfc/rfc2182#section-5)); резолвер выбирает адрес по RTT, BGP — PoP | BGP withdraw |
-| `cloud.example` | BGP Anycast  | ближайший PoP выбирает BGP | BGP withdraw |
-| `auth.cloud.example` | Geo-based DNS + ECS для России; XiXi DNS для РК и зарубежных | Россия: ФО → MSK / KZN / NSK (§3.4, веса); РК: XiXi ALA 50 / AST 50; зарубежные: XiXi MSK 41,5 / KZN 58,5. Выбирает **только точку входа**, а не регион хранения (§3.2) | HTTP раз в 10 с, исключение после 3 ошибок |
-| `api.ru.cloud.example` | Geo-based DNS + XiXi DNS | ФО → MSK / KZN / NSK ; зарубежные — XiXi MSK 41,5 / KZN 58,5 | HTTP раз в 10 с, исключение после 3 ошибок |
-| `api.kz.cloud.example` | XiXi DNS  | веса ALA 50 / AST 50; отказ ДЦ — вес 0                                                                                                                      | HTTP раз в 10 с, исключение после 3 ошибок |
-| `data-{dc}.cloud.example` | статическая A-запись одного ДЦ | ДЦ выбирает API                                                                                                                                             | -                                          |
-| `thumb.{ru,kz}`, `{ru,kz}.cloudcontent.example` | BGP Anycast (префикс региона) | ближайший PoP своей страны                                                                                                                                  | BGP withdraw                               |
+| Имя / вариант DNS | Механизм | Логика выбора |
+|---|---|---|
+| `ns1–ns4.cloud.example` | BGP Anycast | 4 адреса: ns1–ns2 в префиксе RU, ns3–ns4 в префиксе KZ (больше двух NS и хотя бы один удалённый — [RFC 2182 §5](https://www.rfc-editor.org/rfc/rfc2182#section-5)); резолвер выбирает адрес по RTT, BGP — PoP |
+| `cloud.example` | BGP Anycast  | ближайший PoP выбирает BGP |
+| `auth.cloud.example` | Geo-based DNS + ECS для России; XiXi DNS для РК и зарубежных | Россия: ФО → MSK / KZN / NSK (§3.4, веса); РК: XiXi ALA 50 / AST 50; зарубежные: XiXi MSK 41,5 / KZN 58,5. Выбирает **только точку входа**, а не регион хранения (§3.2) |
+| `api.ru.cloud.example` | Geo-based DNS + XiXi DNS | ФО → MSK / KZN / NSK ; зарубежные — XiXi MSK 41,5 / KZN 58,5 |
+| `api.kz.cloud.example` | XiXi DNS  | веса ALA 50 / AST 50; отказ ДЦ — вес 0 |
+| `data-{dc}.cloud.example` | статическая A-запись одного ДЦ | ДЦ выбирает API |
+| `thumb.{ru,kz}`, `{ru,kz}.cloudcontent.example` | BGP Anycast (префикс региона) | ближайший PoP своей страны |
 
 **Веса GeoDNS / XiXi.** Доли — от всех пользователей. Страну и округ DNS определяет по геобазе для подсети клиента (ECS) или по сети резолвера.
 
@@ -377,4 +377,3 @@
 | ЦОД Tier III: Казань, Новосибирск, Алматы, Астана | [Ростелеком-ЦОД Москва](https://www.company.rt.ru/press/news/d457274/), [Атомдата «Иннополис»](https://atomdata.ru/data-centers/innopolis.html), [Ростелеком-ЦОД Новосибирск](https://www.company.rt.ru/press/news/d457923/), [Kazteleport Sairam](https://kazteleport.kz/landingpage/tieriii_dc-sairam-almaty/), [Kazteleport](https://kazteleport.kz/about/) |
 
 ---
-
