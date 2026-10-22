@@ -396,3 +396,87 @@
 | Ячейки, ключ разбиения — клиент, маршрутизатор ячеек | [AWS: Cell-based architecture](https://docs.aws.amazon.com/wellarchitected/latest/reducing-scope-of-impact-with-cell-based-architecture/what-is-a-cell-based-architecture.html) |
 
 ---
+
+## Глава 4. Локальная балансировка нагрузки (LSLB)
+
+### 4.1 Схема балансировки
+
+```mermaid
+flowchart LR
+    C["Клиенты"] --> NET["Интернет"]
+    subgraph DC["ДЦ RU"]
+        R["2 маршрутизатора"] --> L4["L4: 2 × IPVS DR"]
+        L4 --> L7["L7: 3 × nginx"]
+        L7 --> S["Поды Kubernetes: auth, api, шлюзы data"]
+        S --> I["metadata, quota"]
+        L7 -.->|"ответ"| R
+    end
+    NET --> R
+    R -.-> NET
+```
+
+| Уровень | ДЦ RU (MSK, KZN, NSK) | ДЦ KZ (ALA, AST), edge KHV | Резерв             | Отказ узла → переключение |
+|---|---|---|--------------------|---|
+| Вход | 2 маршрутизатора, 2 оператора | то же | 2N                 | BFD 300 мс × 3 → ≈ 1 с ([RFC 5880](https://www.rfc-editor.org/rfc/rfc5880)) |
+| L4 | 2 × IPVS, Direct Routing, `wlc`; VIP по VRRP; синхронизация соединений | нет | 2N                 | VRRP; установленные соединения сохраняются |
+| L7 | 3 × nginx: TLS, маршрутизация по Host, буфер тела, кэш CDN (§3.5) | 2 × nginx, VIP по VRRP | N+1 (RU) / 2N (KZ) | keepalived `GET /health` раз в 2 с, 3 ошибки → ≤ 6 с |
+| Сервисы | поды, HPA; nginx шлёт запросы напрямую в Endpoints | KZ — так же; KHV — нет (только кэш) | N+1                | readiness-проба не пройдена → под убран из Endpoints |
+| Внутренние вызовы | gRPC через headless Service, round-robin на клиенте | так же | —                  | клиент исключает под, убранный из Endpoints |
+
+### 4.2 Расчёт количества балансировщиков
+
+| Нагрузка на площадку (пик, худший случай) | ДЦ RU | ДЦ KZ | KHV | Откуда |
+|---|---|---|---|---|
+| Доля глобального пика | 47,75% | 4,5% | 3,98% | §3.4; ДФО |
+| Новые TLS-соединения/с (каждый запрос — новое соединение) | **10 726** | 1 011 | 758 | ((4 831 − 1 389 квота) + 13 889 превью + 5 131 статика) × доля |
+| Через L7, Гбит/с | **26,07** = 20,82 вход + 5,25 выход | 2,46 | 0,17 | вход: 43,6 × доля; выход: (6,85 + 1,03 + 2,22 + 0,90) × доля |
+| Через L4, Гбит/с | **20,82** | — | — | 43,6 × доля |
+
+| Ресурс одного узла | Значение | Источник |
+|---|---|---|
+| Полные TLS-рукопожатия, на ядро | 428 | [NGINX 2017](https://blog.nginx.org/blog/testing-the-performance-of-nginx-and-nginx-plus-web-servers), SSL TPS, 1 CPU |
+| Шифрование потока, Гбит/с на ядро | 3,86 = 4 830 RPS × 100 КБ × 8 | [NGINX 2017](https://blog.nginx.org/blog/testing-the-performance-of-nginx-and-nginx-plus-web-servers), HTTPS 100 КБ, 1 CPU |
+| HTTPS RPS (keep-alive, 1 КБ), на ядро | 28 640 | [NGINX 2019](https://blog.nginx.org/blog/testing-performance-nginx-ingress-controller-kubernetes), 1 CPU |
+| Узел | 24 ядра, 2 × 25 GbE | SSL TPS растёт линейно до 24 CPU ([NGINX 2017](https://blog.nginx.org/blog/testing-the-performance-of-nginx-and-nginx-plus-web-servers)) |
+| Целевая загрузка | ≤ 70%: 16,8 ядра, 35 Гбит/с | запас 1 / 0,7 = 1,43 ≥ рост 1,17² = 1,37 (§1.2) — на 2 года |
+
+| Ограничитель                            | ДЦ RU | ДЦ KZ | KHV |
+|-----------------------------------------|---|---|---|
+| SSL: рукопожатия                        | 10 726 / 428 = 25,1 ядра | 2,4 ядра | 1,8 ядра |
+| SSL: шифрование (TLS только до клиента) | 26,07 / 3,86 = 6,8 ядра | 0,6 ядра | 0,04 ядра |
+| **CPU / 16,8**                          | 31,9 / 16,8 = 1,9 → **N = 2** | 3,0 / 16,8 = 0,2 → N = 1 | 1,8 / 16,8 = 0,1 → N = 1 |
+| Сеть L7 / 35 Гбит/с                     | 26,07 / 35 = 0,74 → N = 1 | N = 1 | N = 1 |
+| HTTPS RPS                               | 10 726 / 28 640 = 0,4 ядра — не ограничитель | — | — |
+| **L7**                                  | **2 + 1 = 3** (N+1) | **2** (2N, VRRP) | **2** (2N, VRRP) |
+| Сеть L4 / 35 Гбит/с                     | 20,82 / 35 = 0,59 → N = 1 | — | — |
+| **L4**                                  | **2** (2N, VRRP) | — | — |
+
+| Площадка | L4 | L7 | Всего |
+|---|---|---|---|
+| MSK, KZN, NSK | 3 × 2 | 3 × 3 | 15 |
+| ALA, AST | — | 2 × 2 | 4 |
+| KHV | — | 2 | 2 |
+| **Итого** | **6** | **15** | **21** |
+
+### 4.3 Проверка отказов (ДЦ RU, пик при потолке 47,75%)
+
+| Отказ | Остаётся | Нагрузка | Итог |
+|---|---|---|---|
+| 1 узел L7 | 2 × 24 = 48 ядер, 2 × 50 Гбит/с | 31,9 ядра (66%), 26,07 Гбит/с | ✓ |
+| 1 узел L4 | второй L4: 50 Гбит/с | 20,82 Гбит/с (42%) | ✓ |
+| 1 порт или коммутатор | у L4 один порт 25 Гбит/с | 20,82 Гбит/с (83%) | ✓ |
+| Буфер загрузок на L7 | 1 563 одновременных загрузки × ≤ 8 МБ = 12,5 ГБ на ДЦ | 4,2 ГБ на узел, 6,3 ГБ при отказе узла | ✓ |
+| Оба L4 или все L7 | — | — | `auth` уводит GSLB (≈ 90 с: 3 проверки по 10 с + TTL 60 с), Anycast — BGP; master БД переключается в резервный ДЦ, клиенты идут туда (§3.6) |
+
+### 4.3 Источники
+
+| Факт | Источник |
+|---|---|
+| SSL TPS, HTTPS RPS, шифрование потока | [NGINX 2017](https://blog.nginx.org/blog/testing-the-performance-of-nginx-and-nginx-plus-web-servers), [NGINX 2019](https://blog.nginx.org/blog/testing-performance-nginx-ingress-controller-kubernetes) |
+| DR и `wlc` — значения по умолчанию, синхронизация соединений | [ipvsadm(8)](https://manpages.ubuntu.com/manpages/noble/man8/ipvsadm.8.html) |
+| keepalived: `HTTP_GET`, `track_script` → FAULT, `lvs_sync_daemon`, переключение 3 × `advert_int` + skew | [keepalived.conf(5)](https://manpages.debian.org/testing/keepalived/keepalived.conf.5.en.html) |
+| VRRP, BFD | [RFC 5798](https://www.rfc-editor.org/rfc/rfc5798), [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880) |
+| Маршрутизатор входа (пример): Eltex ME5200S, «магистральный маршрутизатор» — 720 Гбит/с, 720 млн пакетов/с, порты 4 × 100G (QSFP28) и 32 × 10G (SFP+); трафик ДЦ RU 26,07 Гбит/с = 3,6% маршрутизатора и 26% порта 100GbE к оператору | [OPTICOM: Eltex ME5200S](https://opticom.ru/catalog/marshrutizatory/marshrutizator-me5200s/), [Eltex: ME5200S](https://eltex.ru/product/marshrutizator_me5200/) |
+| Повтор, буферизация, keep-alive, SSL | [ngx_http_proxy_module](https://nginx.org/en/docs/http/ngx_http_proxy_module.html), [ngx_http_upstream_module](https://nginx.org/en/docs/http/ngx_http_upstream_module.html), [ngx_http_ssl_module](https://nginx.org/en/docs/http/ngx_http_ssl_module.html) |
+| L4 NAT / TUN / DR, keepalived, L7, варианты балансировки | лекция 4 «Локальная балансировка нагрузки», Быков А., 25.09.2023 |
+| HPA, балансировка gRPC | [Kubernetes HPA](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/), [gRPC Load Balancing](https://grpc.io/blog/grpc-load-balancing/) |
